@@ -233,7 +233,7 @@ const AnalogChart: React.FC<AnalogChartProps> = ({
         <ResponsiveContainer width="100%" height={160}>
           <ComposedChart
             data={chartData}
-            margin={{ top: 10, right: 30, left: 20, bottom: 40 }}
+            margin={{ top: 10, right: 10, left: 20, bottom: 40 }}
             stackOffset="sign"
           >
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -250,7 +250,7 @@ const AnalogChart: React.FC<AnalogChartProps> = ({
             <YAxis
               domain={[yAxisRange.min, yAxisRange.max]}
               tick={{ fill: '#6b7280', fontSize: 10 }}
-              width={115}
+              width={140}
               label={{ value: unit, angle: -90, position: 'insideLeft', style: { textAnchor: 'middle' } }}
             />
             {/* Tooltip removed */}

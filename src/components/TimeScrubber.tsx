@@ -21,8 +21,9 @@ interface TimeScrubberProps {
 
 const BASE_LEFT_MARGIN = 20; // same as charts
 const RIGHT_MARGIN = 30;     // same as charts
-const Y_AXIS_LEFT_WIDTH = 115; // align with charts' YAxis width
-const CHART_LEFT_OFFSET = BASE_LEFT_MARGIN + Y_AXIS_LEFT_WIDTH;
+const Y_AXIS_LEFT_WIDTH = 140; // align with widest chart YAxis (Digital timeline)
+const ALIGN_TWEAK_PX = 4;    // fine-tune to match chart plotting origin exactly
+const CHART_LEFT_OFFSET = BASE_LEFT_MARGIN + Y_AXIS_LEFT_WIDTH + ALIGN_TWEAK_PX;
 
 const TimeScrubber: React.FC<TimeScrubberProps> = ({
   data,

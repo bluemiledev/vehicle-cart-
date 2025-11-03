@@ -145,7 +145,7 @@ const DigitalSignalTimeline: React.FC<DigitalSignalTimelineProps> = ({
             <ResponsiveContainer width="100%" height={chartHeight}>
               <LineChart
                 data={chartData}
-                margin={{ top: 10, right: 30, left: 20, bottom: 40 }}
+                margin={{ top: 10, right: 10, left: 20, bottom: 40 }}
               >
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                 <XAxis

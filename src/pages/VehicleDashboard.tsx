@@ -414,13 +414,34 @@ const VehicleDashboard: React.FC = () => {
         setVehicleMetrics(analogMetrics);
         setDigitalStatusChart(digitalChart);
 
-        // If per-second data exists, focus initial selection on that span; otherwise use full times range
+        // Determine the actual data range from all loaded signals
         const minCandidates: number[] = [];
+        const maxCandidates: number[] = [];
+        // Collect from per-second data first (most accurate)
         if (typeof perSecondAnalogMinTs === 'number') minCandidates.push(perSecondAnalogMinTs);
         if (typeof perSecondDigitalMinTs === 'number') minCandidates.push(perSecondDigitalMinTs);
-        const maxCandidates: number[] = [];
         if (typeof perSecondAnalogMaxTs === 'number') maxCandidates.push(perSecondAnalogMaxTs);
         if (typeof perSecondDigitalMaxTs === 'number') maxCandidates.push(perSecondDigitalMaxTs);
+        // Also collect from actual analog data points
+        analogMetrics.forEach(m => {
+          if (m.data && m.data.length > 0) {
+            const first = m.data[0]?.time?.getTime?.();
+            const last = m.data[m.data.length - 1]?.time?.getTime?.();
+            if (typeof first === 'number') minCandidates.push(first);
+            if (typeof last === 'number') maxCandidates.push(last);
+          }
+        });
+        // Also collect from actual digital data points
+        if (digitalChart && digitalChart.metrics.length > 0) {
+          digitalChart.metrics.forEach(m => {
+            if (m.data && m.data.length > 0) {
+              const first = m.data[0]?.time?.getTime?.();
+              const last = m.data[m.data.length - 1]?.time?.getTime?.();
+              if (typeof first === 'number') minCandidates.push(first);
+              if (typeof last === 'number') maxCandidates.push(last);
+            }
+          });
+        }
         const combinedMin = minCandidates.length ? Math.min(...minCandidates) : null;
         const combinedMax = maxCandidates.length ? Math.max(...maxCandidates) : null;
         if (combinedMin !== null && combinedMax !== null) {
@@ -431,6 +452,7 @@ const VehicleDashboard: React.FC = () => {
           setSelectionStart(start);
           setSelectionEnd(end);
         } else {
+          // Fallback to times array only if no data points found
           const firstTs = times[0];
           const lastTs = times[times.length - 1];
           if (firstTs) {
@@ -456,11 +478,50 @@ const VehicleDashboard: React.FC = () => {
         setVehicleMetrics(analogMetrics);
         setDigitalStatusChart(digitalChart);
         try {
-          const first = analogMetrics?.[0]?.data?.[0]?.time || digitalChart?.metrics?.[0]?.data?.[0]?.time || null;
-          const last = analogMetrics?.[0]?.data?.[analogMetrics[0]?.data.length - 1]?.time || digitalChart?.metrics?.[0]?.data?.[digitalChart.metrics[0]?.data.length - 1]?.time || null;
-          if (first) setSelectedTime(new Date(first));
-          if (first) setSelectionStart(new Date(first));
-          if (last) setSelectionEnd(new Date(last));
+          // Collect actual data range from all metrics
+          const fallbackMins: number[] = [];
+          const fallbackMaxs: number[] = [];
+          analogMetrics.forEach(m => {
+            if (m.data && m.data.length > 0) {
+              const first = m.data[0]?.time?.getTime?.();
+              const last = m.data[m.data.length - 1]?.time?.getTime?.();
+              if (typeof first === 'number') fallbackMins.push(first);
+              if (typeof last === 'number') fallbackMaxs.push(last);
+            }
+          });
+          if (digitalChart && digitalChart.metrics.length > 0) {
+            digitalChart.metrics.forEach(m => {
+              if (m.data && m.data.length > 0) {
+                const first = m.data[0]?.time?.getTime?.();
+                const last = m.data[m.data.length - 1]?.time?.getTime?.();
+                if (typeof first === 'number') fallbackMins.push(first);
+                if (typeof last === 'number') fallbackMaxs.push(last);
+              }
+            });
+          }
+          const fallbackMin = fallbackMins.length ? Math.min(...fallbackMins) : null;
+          const fallbackMax = fallbackMaxs.length ? Math.max(...fallbackMaxs) : null;
+          if (fallbackMin !== null && fallbackMax !== null) {
+            const start = new Date(fallbackMin);
+            const end = new Date(fallbackMax);
+            const center = new Date(Math.floor((start.getTime() + end.getTime()) / 2));
+            setSelectedTime(center);
+            setSelectionStart(start);
+            setSelectionEnd(end);
+          } else {
+            const first = analogMetrics?.[0]?.data?.[0]?.time || digitalChart?.metrics?.[0]?.data?.[0]?.time || null;
+            const last = analogMetrics?.[0]?.data?.[analogMetrics[0]?.data.length - 1]?.time || digitalChart?.metrics?.[0]?.data?.[digitalChart.metrics[0]?.data.length - 1]?.time || null;
+            if (first) {
+              setSelectionStart(new Date(first));
+              if (last) {
+                const center = new Date(Math.floor((first.getTime() + last.getTime()) / 2));
+                setSelectedTime(center);
+              } else {
+                setSelectedTime(new Date(first));
+              }
+            }
+            if (last) setSelectionEnd(new Date(last));
+          }
         } catch {}
         setLoading(false);
       }
