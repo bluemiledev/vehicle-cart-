@@ -3,6 +3,7 @@ import { format, parseISO } from 'date-fns';
 import TimeScrubber from '../components/TimeScrubber';
 import DigitalSignalTimeline from '../components/DigitalSignalTimeline';
 import AnalogChart from '../components/AnalogChart';
+import AssetSelectionModal from '../components/AssetSelectionModal';
 import styles from './VehicleDashboard.module.css';
 import { useTimeContext } from '../context/TimeContext';
 
@@ -38,7 +39,10 @@ const VehicleDashboard: React.FC = () => {
   const [selectionStart, setSelectionStart] = useState<Date | null>(null);
   const [selectionEnd, setSelectionEnd] = useState<Date | null>(null);
   const [crosshairActive, setCrosshairActive] = useState<boolean>(false);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [showAssetModal, setShowAssetModal] = useState<boolean>(true);
+  const [selectedVehicleId, setSelectedVehicleId] = useState<number | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string>('');
 
   // Generate realistic vehicle data patterns
   const generateVehicleData = useCallback((): { analogMetrics: VehicleMetric[]; digitalChart: DigitalStatusChart } => {
@@ -212,37 +216,183 @@ const VehicleDashboard: React.FC = () => {
     };
   }, []);
 
+  const handleShowGraph = useCallback((vehicleId: number, date: string) => {
+    // Clear previous data before loading new data
+    setVehicleMetrics([]);
+    setDigitalStatusChart({
+      id: 'digital-status',
+      name: 'Digital Status Indicators',
+      metrics: []
+    });
+    setSelectedTime(null);
+    setSelectionStart(null);
+    setSelectionEnd(null);
+    
+    setSelectedVehicleId(vehicleId);
+    setSelectedDate(date);
+    setShowAssetModal(false);
+  }, []);
+
   useEffect(() => {
+    // Only load data if asset modal is closed and we have vehicleId and date
+    if (showAssetModal || !selectedVehicleId || !selectedDate) {
+      return;
+    }
+
     const load = async () => {
       try {
         setLoading(true);
-        // Prefer external API, fall back to local JSON if unavailable
+        // Use the selected vehicle ID and date in the API call
         let json: any;
         try {
-          const apiUrl = new URL('https://no-reply.com.au/smart_data_link/get_charts_data_1');
-          apiUrl.search = window.location.search; // pass through any query params
+          // Use the get-data-by-devices-id-and-date endpoint (as specified by user)
+          const apiUrl = new URL('http://smartdatalink.com.au/get-data-by-devices-id-and-date');
+          // Add id and date as query parameters
+          apiUrl.searchParams.set('id', selectedVehicleId.toString());
+          apiUrl.searchParams.set('date', selectedDate);
+          
+          console.log('🔗 Fetching from PRIMARY endpoint:', apiUrl.toString());
+          console.log('Vehicle ID:', selectedVehicleId, 'Date:', selectedDate);
+          
           const apiRes = await fetch(apiUrl.toString(), {
             headers: { 'Accept': 'application/json' },
-            cache: 'no-store'
+            cache: 'no-store',
+            mode: 'cors'
           });
-          if (!apiRes.ok) throw new Error('api failed');
+          
+          if (!apiRes.ok) {
+            console.error('❌ API response not OK:', apiRes.status, apiRes.statusText);
+            throw new Error(`API failed with status ${apiRes.status}`);
+          }
+          
           json = await apiRes.json();
-        } catch {
-          const resLocal = await fetch('/data/telemetry.json', {
-            headers: { 'Accept': 'application/json' },
-            cache: 'no-store'
+          console.log('✅ Primary API success, response:', json);
+        } catch (err: any) {
+          console.error('❌ Primary API fetch error:', err);
+          console.error('Error details:', {
+            message: err.message,
+            stack: err.stack,
+            name: err.name
           });
-          if (!resLocal.ok) throw new Error('no json');
-          json = await resLocal.json();
+          
+          // Don't use fallback - show error to user
+          setLoading(false);
+          alert(`Failed to load chart data from API.\n\nEndpoint: http://smartdatalink.com.au/get-data-by-devices-id-and-date\nVehicle ID: ${selectedVehicleId}\nDate: ${selectedDate}\n\nError: ${err.message}\n\nPlease check the console for more details.`);
+          throw err;
         }
         // Unwrap common API envelope { status, message, data }
         const payload: any = (json && typeof json === 'object' && 'data' in json) ? (json as any).data : json;
+        
+        // Log the payload structure for debugging
+        console.log('📦 Payload structure:', {
+          isArray: Array.isArray(payload),
+          length: Array.isArray(payload) ? payload.length : 'N/A',
+          keys: typeof payload === 'object' && payload !== null && !Array.isArray(payload) ? Object.keys(payload) : 'N/A',
+          firstItem: Array.isArray(payload) && payload.length > 0 ? payload[0] : null,
+          payloadType: typeof payload
+        });
+        
+        // Check if payload is a flat array (new API format) or grouped structure (old format)
+        const isFlatArray = Array.isArray(payload) && payload.length > 0 && payload[0]?.chartName;
         
         // Debug: Log full API response
         console.group('📊 API Response - Full Payload');
         console.log('Raw JSON:', json);
         console.log('Payload:', payload);
+        console.log('Is Flat Array:', isFlatArray);
         console.groupEnd();
+        
+        // If flat array format, transform it into grouped structure
+        if (isFlatArray) {
+          console.group('🔄 Transforming Flat Array to Grouped Structure');
+          
+          // Group readings by chartName
+          const groupedByChart: Record<string, any[]> = {};
+          (payload as any[]).forEach((reading: any) => {
+            if (!reading.chartName) return;
+            const chartName = String(reading.chartName);
+            if (!groupedByChart[chartName]) {
+              groupedByChart[chartName] = [];
+            }
+            groupedByChart[chartName].push(reading);
+          });
+          
+          console.log('Grouped by chart:', groupedByChart);
+          
+          // Separate digital and analog signals
+          const digitalSignals: any[] = [];
+          const analogSignals: any[] = [];
+          
+          Object.entries(groupedByChart).forEach(([chartName, readings]) => {
+            const firstReading = readings[0];
+            const chartType = String(firstReading.chartType || '').toLowerCase();
+            
+            // Extract chart ID from chartName (e.g., "On-Track Status (D1)" -> "D1")
+            const idMatch = chartName.match(/\(([^)]+)\)/);
+            const chartId = idMatch ? idMatch[1] : chartName;
+            
+            // Sort readings by date_time
+            readings.sort((a, b) => {
+              const timeA = Date.parse(a.date_time || `${a.date} ${a.time}` || '');
+              const timeB = Date.parse(b.date_time || `${b.date} ${b.time}` || '');
+              return timeA - timeB;
+            });
+            
+            if (chartType === 'digital') {
+              // Digital signal
+              const values: number[] = [];
+              const times: string[] = [];
+              
+              readings.forEach((r: any) => {
+                const timeStr = r.date_time || `${r.date} ${r.time}`;
+                times.push(timeStr);
+                values.push(Number(r.value ?? 0));
+              });
+              
+              digitalSignals.push({
+                id: chartId,
+                name: chartName.replace(/\([^)]+\)/, '').trim(),
+                values,
+                times,
+                chartType: 'Digital'
+              });
+            } else if (chartType === 'analogue' || chartType === 'analog') {
+              // Analog signal
+              const avgValues: number[] = [];
+              const minValues: number[] = [];
+              const maxValues: number[] = [];
+              const times: string[] = [];
+              
+              readings.forEach((r: any) => {
+                const timeStr = r.date_time || `${r.date} ${r.time}`;
+                times.push(timeStr);
+                avgValues.push(Number(r.avg ?? 0));
+                minValues.push(Number(r.min ?? r.avg ?? 0));
+                maxValues.push(Number(r.max ?? r.avg ?? 0));
+              });
+              
+              analogSignals.push({
+                id: chartId,
+                name: chartName.replace(/\([^)]+\)/, '').trim(),
+                values: avgValues,
+                avg: avgValues,
+                mins: minValues,
+                maxs: maxValues,
+                times,
+                chartType: 'Analogue'
+              });
+            }
+          });
+          
+          console.log('Digital signals:', digitalSignals);
+          console.log('Analog signals:', analogSignals);
+          console.groupEnd();
+          
+          // Replace payload with grouped structure
+          (payload as any).digitalSignals = digitalSignals;
+          (payload as any).analogSignals = analogSignals;
+        }
+        
         // Normalize possible server payloads into common structure
         // Prefer json.times, but also accept 'timestamps' variants and string times
         const pick = (...paths: string[]): any => {
@@ -339,7 +489,18 @@ const VehicleDashboard: React.FC = () => {
           id: 'digital-status',
           name: 'Digital Status Indicators',
           metrics: digitalSignalsRaw.map((s: any, idx: number) => {
-            const signalTimes = s.times || s.timeStamps || s.timestamps || times;
+            // Handle both string times (from flat array) and numeric timestamps
+            let signalTimes: any[] = s.times || s.timeStamps || s.timestamps || [];
+            if (signalTimes.length > 0 && typeof signalTimes[0] === 'string') {
+              // Convert string times (date_time format) to timestamps
+              signalTimes = signalTimes.map((t: string) => {
+                const parsed = Date.parse(t);
+                return Number.isFinite(parsed) ? parsed : null;
+              }).filter((t): t is number => t !== null);
+            }
+            if (!signalTimes.length) {
+              signalTimes = times;
+            }
             const normalizedSignalTimes = Array.isArray(signalTimes)
               ? signalTimes.map(parseTimestampToMs).filter((n: number) => Number.isFinite(n)).map(alignToMinute).sort((a: number, b: number) => a - b)
               : times;
@@ -369,6 +530,9 @@ const VehicleDashboard: React.FC = () => {
         const analogSignalsArr: any[] = (pick('analogSignals', 'analogs', 'analog') || []);
         console.group('📈 Analog Signals - API Response');
         console.log('Number of analog signals:', analogSignalsArr.length);
+        if (analogSignalsArr.length === 0) {
+          console.warn('⚠️ No analog signals found in API response');
+        }
         analogSignalsArr.forEach((s: any, idx: number) => {
           console.group(`Analog Signal ${idx + 1}: ${s.id || s.name || 'Unknown'}`);
           console.log('Raw API Data:', s);
@@ -389,7 +553,14 @@ const VehicleDashboard: React.FC = () => {
           const maxsRaw: number[] | undefined = (s.maxs ?? s.maxValues ?? s.max ?? null)?.map?.((v: any) => Number(v));
           
           // Get signal-specific timestamps if available, otherwise use global times
-          const signalTimes = s.times || s.timeStamps || s.timestamps || times;
+          let signalTimes: any[] = s.times || s.timeStamps || s.timestamps || [];
+          if (signalTimes.length > 0 && typeof signalTimes[0] === 'string') {
+            // Convert string times to timestamps
+            signalTimes = signalTimes.map((t: string) => Date.parse(t));
+          }
+          if (!signalTimes.length) {
+            signalTimes = times;
+          }
           const normalizedSignalTimes = Array.isArray(signalTimes)
             ? signalTimes.map(parseTimestampToMs).filter((n: number) => Number.isFinite(n)).map(alignToMinute).sort((a: number, b: number) => a - b)
             : times;
@@ -578,9 +749,10 @@ const VehicleDashboard: React.FC = () => {
           });
         }
 
-        // If json invalid, fallback
-        if ((!times || !times.length) && (!digitalChart.metrics.length && !analogMetrics.length)) {
-          throw new Error('invalid');
+        // Allow empty data - show empty charts instead of fallback
+        // If API returns empty/null data, we show empty charts (not generated data)
+        if (!digitalChart.metrics.length && !analogMetrics.length) {
+          console.warn('⚠️ No data found in API response - showing empty charts');
         }
 
         // Debug: Final data being set to state
@@ -605,6 +777,7 @@ const VehicleDashboard: React.FC = () => {
         });
         console.groupEnd();
 
+        // Always set the API data (even if empty) - never use generated fallback
         setVehicleMetrics(analogMetrics);
         setDigitalStatusChart(digitalChart);
 
@@ -666,62 +839,34 @@ const VehicleDashboard: React.FC = () => {
         }
         setLoading(false);
         return;
-      } catch (e) {
-        // fallback to generator
-        const { analogMetrics, digitalChart } = generateVehicleData();
-        setVehicleMetrics(analogMetrics);
-        setDigitalStatusChart(digitalChart);
-        try {
-          // Collect actual data range from all metrics
-          const fallbackMins: number[] = [];
-          const fallbackMaxs: number[] = [];
-          analogMetrics.forEach(m => {
-            if (m.data && m.data.length > 0) {
-              const first = m.data[0]?.time?.getTime?.();
-              const last = m.data[m.data.length - 1]?.time?.getTime?.();
-              if (typeof first === 'number') fallbackMins.push(first);
-              if (typeof last === 'number') fallbackMaxs.push(last);
-            }
-          });
-          if (digitalChart && digitalChart.metrics.length > 0) {
-            digitalChart.metrics.forEach(m => {
-              if (m.data && m.data.length > 0) {
-                const first = m.data[0]?.time?.getTime?.();
-                const last = m.data[m.data.length - 1]?.time?.getTime?.();
-                if (typeof first === 'number') fallbackMins.push(first);
-                if (typeof last === 'number') fallbackMaxs.push(last);
-              }
-            });
-          }
-          const fallbackMin = fallbackMins.length ? Math.min(...fallbackMins) : null;
-          const fallbackMax = fallbackMaxs.length ? Math.max(...fallbackMaxs) : null;
-          if (fallbackMin !== null && fallbackMax !== null) {
-            const start = new Date(fallbackMin);
-            const end = new Date(fallbackMax);
-            const center = new Date(Math.floor((start.getTime() + end.getTime()) / 2));
-            setSelectedTime(center);
-            setSelectionStart(start);
-            setSelectionEnd(end);
-          } else {
-            const first = analogMetrics?.[0]?.data?.[0]?.time || digitalChart?.metrics?.[0]?.data?.[0]?.time || null;
-            const last = analogMetrics?.[0]?.data?.[analogMetrics[0]?.data.length - 1]?.time || digitalChart?.metrics?.[0]?.data?.[digitalChart.metrics[0]?.data.length - 1]?.time || null;
-            if (first) {
-              setSelectionStart(new Date(first));
-              if (last) {
-                const center = new Date(Math.floor((first.getTime() + last.getTime()) / 2));
-                setSelectedTime(center);
-              } else {
-                setSelectedTime(new Date(first));
-              }
-            }
-            if (last) setSelectionEnd(new Date(last));
-          }
-        } catch {}
+      } catch (e: any) {
+        // NO FALLBACK TO GENERATED DATA - show empty charts instead
+        console.error('❌ Error loading data:', e);
+        console.error('Error details:', {
+          message: e.message,
+          stack: e.stack
+        });
+        
+        // Set empty data - show empty charts, not generated fallback
+        setVehicleMetrics([]);
+        setDigitalStatusChart({
+          id: 'digital-status',
+          name: 'Digital Status Indicators',
+          metrics: []
+        });
+        
+        // Reset time selection
+        setSelectedTime(null);
+        setSelectionStart(null);
+        setSelectionEnd(null);
+        
+        // Show error message but don't generate fake data
+        console.error('⚠️ Charts will be empty - no data loaded from API');
         setLoading(false);
       }
     };
     load();
-  }, [generateVehicleData]);
+  }, [showAssetModal, selectedVehicleId, selectedDate]);
 
   // Prepare scrubber data as a dense per-minute grid using the full available range
   const scrubberData = useMemo(() => {
@@ -825,6 +970,11 @@ const VehicleDashboard: React.FC = () => {
   const handleHover = useCallback((_timestamp: number | null) => {
     // Intentionally no-op: keep pointer/red-line fixed unless knob is dragged
   }, []);
+
+  // Show asset selection modal first
+  if (showAssetModal) {
+    return <AssetSelectionModal onShowGraph={handleShowGraph} />;
+  }
 
   return (
     <div className={styles.dashboard}>

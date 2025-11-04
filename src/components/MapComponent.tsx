@@ -41,8 +41,27 @@ const MapComponent: React.FC = () => {
         // Prefer external API, fall back to local JSON if unavailable
         let json: any;
         try {
-          const apiUrl = new URL('https://no-reply.com.au/smart_data_link/get_charts_data_1');
-          apiUrl.search = window.location.search; // pass through any query params
+          // Use the same endpoint as VehicleDashboard for consistency
+          // Get vehicle ID and date from URL params or context
+          const urlParams = new URLSearchParams(window.location.search);
+          const vehicleId = urlParams.get('id') || urlParams.get('vehicles_id');
+          const date = urlParams.get('date');
+          
+          let apiUrl: URL;
+          if (vehicleId && date) {
+            try {
+              apiUrl = new URL('https://smartdatalink.com.au/get-data-by-devices-id-and-date');
+            } catch {
+              apiUrl = new URL('http://smartdatalink.com.au/get-data-by-devices-id-and-date');
+            }
+            apiUrl.searchParams.set('id', vehicleId);
+            apiUrl.searchParams.set('date', date);
+          } else {
+            // Fallback to old endpoint if params not available
+            apiUrl = new URL('https://no-reply.com.au/smart_data_link/get_charts_data_1');
+            apiUrl.search = window.location.search;
+          }
+          
           const apiRes = await fetch(apiUrl.toString(), { headers: { 'Accept': 'application/json' }, cache: 'no-store' });
           if (!apiRes.ok) throw new Error('api failed');
           json = await apiRes.json();
