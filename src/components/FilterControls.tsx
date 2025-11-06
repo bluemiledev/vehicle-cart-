@@ -8,28 +8,26 @@ const FilterControls: React.FC = () => {
   const [dates, setDates] = useState<string[]>([]);
   const [selectedDate, setSelectedDate] = useState<string>('');
 
-  // Initialize from URL params
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const deviceId = params.get('device_id');
-    const date = params.get('date');
-    if (deviceId) setSelectedVehicleId(deviceId);
-    if (date) setSelectedDate(date);
-  }, []);
+  // Don't initialize from URL params - user must select from AssetSelectionModal
 
   // Load vehicles from API with local fallback
   useEffect(() => {
     let aborted = false;
     const load = async () => {
       try {
-        const apiRes = await fetch('https://www.no-reply.com.au/smart_data_link/get-vehicles', { headers: { 'Accept': 'application/json' }, cache: 'no-store' });
+        // Fetch from reet_python vehicles API (via proxy)
+        const apiRes = await fetch('/reet_python/get_vehicles.php', { headers: { 'Accept': 'application/json' }, cache: 'no-store' });
         if (!apiRes.ok) throw new Error('bad');
         const json = await apiRes.json();
-        const payload: any = (json && typeof json === 'object' && 'data' in json) ? (json as any).data : json;
-        const arr: Vehicle[] = Array.isArray(payload) ? payload.map((v: any) => ({ id: String(v.id), rego: String(v.rego ?? v.name ?? v.id) })) : [];
+        // Map response: [{ devices_serial_no: "6363299" }, ...]
+        const arr: Vehicle[] = Array.isArray(json)
+          ? json.map((v: any) => String(v?.devices_serial_no || ''))
+              .filter((s: string) => s.length > 0)
+              .map((serial: string) => ({ id: serial, rego: serial }))
+          : [];
         if (aborted) return;
         setVehicles(arr);
-        if (!selectedVehicleId && arr.length) setSelectedVehicleId(arr[0].id);
+        // Don't auto-select - user must select from AssetSelectionModal first
       } catch {
         // Minimal hardcoded fallback if API fails
         const fallback: Vehicle[] = [];
@@ -48,17 +46,18 @@ const FilterControls: React.FC = () => {
     const loadDates = async () => {
       if (!selectedVehicleId) { setDates([]); setSelectedDate(''); return; }
       try {
-        const url = `https://www.no-reply.com.au/smart_data_link/get-dates-by-vehicles-id?vehicles_id=${selectedVehicleId}`;
+        // Fetch from reet_python dates API using devices_serial_no (via proxy)
+        const url = `/reet_python/get_vehicle_dates.php?devices_serial_no=${selectedVehicleId}`;
         const res = await fetch(url, { headers: { 'Accept': 'application/json' }, cache: 'no-store' });
         if (!res.ok) throw new Error('bad');
         const json = await res.json();
-        let arr: string[] = [];
-        const payload: any = (json && typeof json === 'object' && 'data' in json) ? (json as any).data : json;
-        if (Array.isArray(payload)) arr = payload.map((d: any) => String(d)).filter((d: string) => d.length > 0);
+        // Map response: [{ date: "YYYY-MM-DD" }, ...]
+        let arr: string[] = Array.isArray(json) ? json.map((o: any) => String(o?.date || '')) : [];
+        arr = arr.filter((d: string) => d.length > 0);
         arr.sort((a, b) => b.localeCompare(a));
         if (aborted) return;
         setDates(arr);
-        if (arr.length) setSelectedDate(arr[0]); else setSelectedDate('');
+        // Don't auto-select date - user must select from AssetSelectionModal first
       } catch (e) {
         if (!aborted) { setDates([]); setSelectedDate(''); }
       }
@@ -67,16 +66,8 @@ const FilterControls: React.FC = () => {
     return () => { aborted = true; };
   }, [selectedVehicleId]);
 
-  // Apply when both selected
-  useEffect(() => {
-    if (!selectedVehicleId || !selectedDate) return;
-    const params = new URLSearchParams(window.location.search);
-    params.set('device_id', selectedVehicleId);
-    params.set('date', selectedDate);
-    const newUrl = `${window.location.pathname}?${params.toString()}`;
-    window.history.pushState({}, '', newUrl);
-    window.dispatchEvent(new CustomEvent('filters:apply', { detail: { device_id: selectedVehicleId, date: selectedDate } }));
-  }, [selectedVehicleId, selectedDate]);
+  // Don't automatically dispatch filters:apply - only dispatch when user explicitly applies filters
+  // The AssetSelectionModal will handle the initial selection via handleShowGraph
 
   return (
     <div className={styles.filterControls}>

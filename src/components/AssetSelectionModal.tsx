@@ -4,6 +4,7 @@ import styles from './AssetSelectionModal.module.css';
 interface Vehicle {
   id: number;
   name: string;
+  rego?: string;
 }
 
 interface AssetSelectionModalProps {
@@ -26,8 +27,8 @@ const AssetSelectionModal: React.FC<AssetSelectionModalProps> = ({ onShowGraph }
         setLoadingVehicles(true);
         setError(''); // Clear previous errors
         
-        // Vehicles endpoint
-        const apiUrl = 'https://www.no-reply.com.au/smart_data_link/get-vehicles';
+        // Vehicles endpoint (use reet_python API via proxy)
+        const apiUrl = '/reet_python/get_vehicles.php';
         console.log('🔗 Fetching vehicles from:', apiUrl);
         
         const response = await fetch(apiUrl, {
@@ -43,25 +44,11 @@ const AssetSelectionModal: React.FC<AssetSelectionModalProps> = ({ onShowGraph }
         const json = await response.json();
         console.log('✅ Vehicles API response:', json);
         
-        // Handle different response formats
-        let vehiclesData: Vehicle[] = [];
-        if (Array.isArray(json)) {
-          vehiclesData = json;
-        } else if (Array.isArray(json.data)) {
-          vehiclesData = json.data;
-        } else if (json.vehicles && Array.isArray(json.vehicles)) {
-          vehiclesData = json.vehicles;
-        } else if (json.result && Array.isArray(json.result)) {
-          vehiclesData = json.result;
-        }
-        
-        // Ensure vehicles have required fields
-        vehiclesData = vehiclesData
-          .filter((v: any) => v && (v.id !== undefined || v.vehicle_id !== undefined))
-          .map((v: any) => ({
-            id: v.id || v.vehicle_id || v.device_id,
-            name: v.name || v.vehicle_name || v.device_name || `Vehicle ${v.id || v.vehicle_id || v.device_id}`
-          }));
+        // Map reet_python response: [{ devices_serial_no: "6363299" }, ...]
+        const vehiclesData: Vehicle[] = (Array.isArray(json) ? json : [])
+          .map((v: any) => String(v?.devices_serial_no || ''))
+          .filter((s: string) => s.length > 0)
+          .map((serial: string) => ({ id: Number(serial), name: serial, rego: serial }));
         
         console.log('📋 Processed vehicles:', vehiclesData);
         
@@ -98,8 +85,8 @@ const AssetSelectionModal: React.FC<AssetSelectionModalProps> = ({ onShowGraph }
           setSelectedDate(''); // Reset date when vehicle changes
           setError(''); // Clear previous errors
           
-          // Use the API endpoint with vehicles_id parameter
-          const apiUrl = `https://www.no-reply.com.au/smart_data_link/get-dates-by-vehicles-id?vehicles_id=${selectedVehicleId}`;
+          // Use the reet_python endpoint with devices_serial_no parameter (via proxy)
+          const apiUrl = `/reet_python/get_vehicle_dates.php?devices_serial_no=${selectedVehicleId}`;
           console.log('🔗 Fetching dates from:', apiUrl);
           
           const response = await fetch(apiUrl, {
@@ -115,19 +102,10 @@ const AssetSelectionModal: React.FC<AssetSelectionModalProps> = ({ onShowGraph }
           const json = await response.json();
           console.log('✅ Dates API response:', json);
           
-          // Handle different possible response formats
-          let datesData: string[] = [];
-          if (Array.isArray(json)) {
-            datesData = json;
-          } else if (Array.isArray(json.data)) {
-            datesData = json.data;
-          } else if (json.dates && Array.isArray(json.dates)) {
-            datesData = json.dates;
-          } else if (json.result && Array.isArray(json.result)) {
-            datesData = json.result;
-          } else if (json.date && Array.isArray(json.date)) {
-            datesData = json.date;
-          }
+          // Map reet_python response: [{ date: "YYYY-MM-DD" }, ...]
+          let datesData: string[] = (Array.isArray(json) ? json : [])
+            .map((o: any) => String(o?.date || ''))
+            .filter((d: string) => d.length > 0);
           
           // Ensure dates are strings and sort them (newest first)
           datesData = datesData
@@ -201,7 +179,7 @@ const AssetSelectionModal: React.FC<AssetSelectionModalProps> = ({ onShowGraph }
             <option value="">Select Asset</option>
             {vehicles.map((vehicle) => (
               <option key={vehicle.id} value={vehicle.id}>
-                {vehicle.name}
+                {vehicle.rego || vehicle.name}
               </option>
             ))}
           </select>
