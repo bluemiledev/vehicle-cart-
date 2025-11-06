@@ -708,9 +708,6 @@ const VehicleDashboard: React.FC = () => {
         digitalSignalsRaw.forEach((s: any, idx: number) => {
           console.group(`📊 Digital Signal ${idx + 1} - Raw API Data: ${s.name || s.id || 'Unknown'}`);
           console.log('Complete API Object:', JSON.stringify(s, null, 2));
-          console.log('Inverse value from API:', s.inverse, '(type:', typeof s.inverse, ')');
-          console.log('Inverse normalized:', String(s.inverse || '').toLowerCase().trim());
-          console.log('Will invert?', String(s.inverse || '').toLowerCase().trim() === 'yes');
           console.log('Values array (first 20):', s.values?.slice(0, 20));
           console.log('Values array (last 20):', s.values?.slice(-20));
           console.log('Total values count:', s.values?.length || 0);
@@ -723,18 +720,6 @@ const VehicleDashboard: React.FC = () => {
           id: 'digital-status',
           name: 'Digital Status Indicators',
           metrics: digitalSignalsRaw.map((s: any, idx: number) => {
-            // Check if inverse is EXACTLY "yes" (case-insensitive) - only then invert values
-            // If inverse = "no", "No", undefined, null, or anything else → show original values
-            const inverseStr = String(s.inverse || '').toLowerCase().trim();
-            const isInverse = inverseStr === 'yes';
-            console.group(`🔍 Digital Signal ${idx + 1} - Inverse Processing: ${s.name || s.id || 'Unknown'}`);
-            console.log('Raw inverse from API:', s.inverse);
-            console.log('Inverse type:', typeof s.inverse);
-            console.log('Normalized inverse:', inverseStr);
-            console.log('Will invert?', isInverse);
-            console.log('Original values (first 20):', s.values?.slice(0, 20));
-            console.log('Original values (last 20):', s.values?.slice(-20));
-            console.groupEnd();
             
             // Handle both string times (from flat array) and numeric timestamps
             let signalTimes: any[] = s.times || s.timeStamps || s.timestamps || [];
@@ -752,50 +737,10 @@ const VehicleDashboard: React.FC = () => {
               ? signalTimes.map(parseTimestampToMs).filter((n: number) => Number.isFinite(n)).map(alignToMinute).sort((a: number, b: number) => a - b)
               : times;
             
-            // Apply inverse logic to values before creating series
-            // If inverse = "yes" or "Yes", reverse ALL values at EVERY time point (0→1, 1→0)
-            // If inverse = "no" or "No" or anything else, show original values as-is
-            let values = s.values || [];
-            // ONLY invert when isInverse is explicitly true (inverse === "yes")
-            // If inverse = "no", "No", undefined, null, or anything else → keep original values
-            if (isInverse === true && Array.isArray(values)) {
-              console.log(`🔄 Inverting values for ${s.name || s.id} (inverse = "yes")`);
-              values = values.map((v: any, vIdx: number) => {
-                const numValue = Number(v);
-                let invertedValue = numValue;
-                // Invert ALL values: 0 becomes 1, 1 becomes 0
-                if (numValue === 1) {
-                  invertedValue = 0;
-                } else if (numValue === 0) {
-                  invertedValue = 1;
-                }
-                // Log first 10 inversions for debugging
-                if (vIdx < 10) {
-                  console.log(`  Value ${vIdx}: ${numValue} → ${invertedValue}`);
-                }
-                return invertedValue;
-              });
-              console.log('Inverted values (first 20):', values.slice(0, 20));
-              console.log('Inverted values (last 20):', values.slice(-20));
-            } else {
-              // When inverse is "no" or not set, keep original values unchanged
-              console.log(`✅ Keeping original values for ${s.name || s.id} (inverse = "${s.inverse}")`);
-            }
+            // Use original API values directly - no inversion applied
+            const values = s.values || [];
             
             const data = toSeries(values, normalizedSignalTimes);
-            
-            // Debug: Log processed data for this signal
-            console.group(`🔍 Digital Signal ${idx + 1} - Processed Data: ${s.id || s.name || 'Unknown'}`);
-            console.log('Inverse:', s.inverse, '→ Applied:', isInverse);
-            console.log('API Values (original):', s.values);
-            console.log('API Values (after inverse):', values);
-            console.log('API Timestamps:', signalTimes);
-            console.log('Normalized Timestamps (aligned to minutes):', normalizedSignalTimes);
-            console.log('Processed Data Points:', data);
-            console.log('Data Points Count:', data.length);
-            console.log('First 5 data points:', data.slice(0, 5));
-            console.log('Last 5 data points:', data.slice(-5));
-            console.groupEnd();
             
             return {
               id: String(s.id),
@@ -996,9 +941,6 @@ const VehicleDashboard: React.FC = () => {
           (payload.digitalPerSecond as Array<any>).forEach((series: any, idx: number) => {
             console.group(`📊 Digital Per-Second Series ${idx + 1} - Raw API Data: ${series.name || series.id || 'Unknown'}`);
             console.log('Complete API Object:', JSON.stringify(series, null, 2));
-            console.log('Inverse value from API:', series.inverse, '(type:', typeof series.inverse, ')');
-            console.log('Inverse normalized:', String(series.inverse || '').toLowerCase().trim());
-            console.log('Will invert?', String(series.inverse || '').toLowerCase().trim() === 'yes');
             console.log('Points array (first 20):', series.points?.slice(0, 20));
             console.log('Points array (last 20):', series.points?.slice(-20));
             console.log('Total points count:', series.points?.length || 0);
@@ -1014,83 +956,17 @@ const VehicleDashboard: React.FC = () => {
             return new Date(alignToMinute(timestamp));
           };
           const metrics = (payload.digitalPerSecond as Array<any>).map((series: any, idx: number) => {
-            // Check if inverse is EXACTLY "yes" (case-insensitive) - only then invert values
-            // If inverse = "no", "No", undefined, null, or anything else → show original values
-            const inverseStr = String(series.inverse || '').toLowerCase().trim();
-            const isInverse = inverseStr === 'yes';
-            console.group(`🔍 Digital Per-Second Series ${idx + 1} - Inverse Processing: ${series.name || series.id || 'Unknown'}`);
-            console.log('Raw inverse from API:', series.inverse);
-            console.log('Inverse type:', typeof series.inverse);
-            console.log('Normalized inverse:', inverseStr);
-            console.log('Will invert?', isInverse);
-            console.log('Original points (first 20):', series.points?.slice(0, 20));
-            console.log('Original points (last 20):', series.points?.slice(-20));
-            
-            // Use exact API values, align timestamps to minutes, sort
-            // If inverse = "yes", reverse ALL values at EVERY time point (0→1, 1→0)
-            // If inverse = "no" or not present, show values as-is
-            const pts = (series.points || []).map((p: any, pointIdx: number) => {
-              const originalValue = Number(p.value ?? 0);
-              let value = originalValue;
-              
-              // Apply inverse logic: ONLY if inverse is EXACTLY "yes" (case-insensitive)
-              // If inverse = "no", "No", undefined, null, or anything else → keep original value
-              if (isInverse === true) {
-                // Only invert when isInverse is explicitly true
-                if (originalValue === 1) {
-                  value = 0;
-                } else if (originalValue === 0) {
-                  value = 1;
-                }
-                // Keep other values as-is
-                
-                // Log first 10 inversions for debugging
-                if (pointIdx < 10) {
-                  console.log(`  Point ${pointIdx}: original=${originalValue} → inverted=${value}`);
-                }
-              } else {
-                // When inverse is "no" or not set, value remains unchanged
-                if (pointIdx < 10) {
-                  console.log(`  Point ${pointIdx}: original=${originalValue} → kept=${value} (no inversion)`);
-                }
-              }
-              
+            // Use exact API values directly - no processing
+            const pts = (series.points || []).map((p: any) => {
+              const value = Number(p.value ?? 0);
               return {
                 time: parseHMS(p.time),
                 value
               };
             });
             
-            if (isInverse) {
-              console.log('Inverted points (first 20):', pts.slice(0, 20));
-              console.log('Inverted points (last 20):', pts.slice(-20));
-            } else {
-              console.log('✅ Kept original values (no inversion applied)');
-            }
-            console.groupEnd();
             // Sort by timestamp
             pts.sort((a: { time: Date; value: number }, b: { time: Date; value: number }) => a.time.getTime() - b.time.getTime());
-            
-            // Debug: Log processed per-second data
-            console.group(`🔍 Digital Per-Second Series ${idx + 1} - Processed Data: ${series.id || series.name || 'Unknown'}`);
-            console.log('Inverse:', series.inverse, '→ Applied:', isInverse);
-            console.log('Inverse check details:', {
-              raw: series.inverse,
-              normalized: inverseStr,
-              isInverse,
-              isInverseType: typeof isInverse,
-              isInverseStrict: isInverse === true
-            });
-            console.log('API Points (raw - first 5):', series.points?.slice(0, 5));
-            console.log('Processed Points (first 5):', pts.slice(0, 5));
-            console.log('Points Count:', pts.length);
-            console.log('Sample comparison:', {
-              firstRaw: series.points?.[0],
-              firstProcessed: pts[0],
-              shouldBeSame: !isInverse,
-              isSame: series.points?.[0]?.value === pts[0]?.value
-            });
-            console.groupEnd();
             
             if (pts.length) {
               const localMin = pts[0].time.getTime();
@@ -1099,18 +975,6 @@ const VehicleDashboard: React.FC = () => {
               perSecondDigitalMaxTs = perSecondDigitalMaxTs === null ? localMax : Math.max(perSecondDigitalMaxTs, localMax);
             }
             const lastValue = pts.length ? Number(pts[pts.length - 1].value) : 0;
-            // Debug log for Jib Chain Fault
-            if (String(series.name ?? series.id) === 'Jib Chain Fault') {
-              console.log('🔍 Jib Chain Fault - Setting currentValue:', {
-                name: series.name,
-                inverse: series.inverse,
-                isInverse,
-                lastPoint: pts.length > 0 ? pts[pts.length - 1] : null,
-                lastValue,
-                first5Points: pts.slice(0, 5),
-                last5Points: pts.slice(-5)
-              });
-            }
             return {
               id: String(series.id),
               name: String(series.name ?? series.id),
@@ -1704,48 +1568,6 @@ const VehicleDashboard: React.FC = () => {
           </div>
         )}
         <div className={styles.scrollContent}>
-          {/* Digital Signal Status Panel */}
-          {digitalStatusChart && digitalStatusChart.metrics.length > 0 && (
-            <div className={styles.digitalStatusPanel}>
-              <div className={styles.statusPanelHeader}>
-                <h3 className={styles.statusPanelTitle}>Digital Signal Status</h3>
-                <span className={styles.statusPanelCount}>
-                  {digitalStatusChart.metrics.length} signals
-                </span>
-              </div>
-              <div className={styles.statusPanelGrid}>
-                {digitalStatusChart.metrics.map((signal) => {
-                  // Get value at selected time if available, otherwise use currentValue
-                  let value = signal.currentValue;
-                  if (selectedTime && signal.data.length > 0) {
-                    const point = signal.data.find(d => 
-                      Math.abs(d.time.getTime() - selectedTime.getTime()) < 900000 // 15 min tolerance
-                    );
-                    if (point) {
-                      value = point.value;
-                    }
-                  }
-                  const status = value === 1 ? 'ON' : 'OFF';
-                  const isOn = status === 'ON';
-                  return (
-                    <div key={signal.id} className={styles.statusItem}>
-                      <div 
-                        className={styles.statusColorIndicator} 
-                        style={{ backgroundColor: signal.color }}
-                      />
-                      <span className={styles.statusName}>{signal.name}</span>
-                      <span 
-                        className={`${styles.statusValue} ${isOn ? styles.statusOn : styles.statusOff}`}
-                      >
-                        {status}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
           {/* Digital Signal Timeline Chart */}
           {digitalStatusChart && digitalStatusChart.metrics.length > 0 && (
             <DigitalSignalTimeline

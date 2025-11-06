@@ -253,7 +253,7 @@ const DigitalSignalTimeline: React.FC<DigitalSignalTimelineProps> = ({
                 // Signal center is at idx - 0.25
                 // Convert Y-axis value to pixel: pixelY = top + ((yAxisValue + 0.5) / signals.length) * innerH
                 const yAxisCenter = idx - 0.25;
-                const y = top + ((yAxisCenter + 0.5) / signals.length) * innerH;
+                const y = top + ((yAxisCenter + 0.5) / signals.length) * innerH;                
                 return (
                   <div
                     key={signal.id}
