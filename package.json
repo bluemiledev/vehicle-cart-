@@ -2,7 +2,7 @@
   "name": "react-chart-app",
   "version": "1.0.0",
   "description": "A professional React application with chart functionality",
-  "homepage": "/charts",
+  "homepage": ".",
   "main": "index.js",
   "scripts": {
     "start": "react-scripts start",
