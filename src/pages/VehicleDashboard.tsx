@@ -9,6 +9,7 @@ import FilterOptionsModal from '../components/FilterOptionsModal';
 import ErrorModal from '../components/ErrorModal';
 import styles from './VehicleDashboard.module.css';
 import { useTimeContext } from '../context/TimeContext';
+import { useDataProcessor } from '../hooks/useDataProcessor';
 
 interface VehicleMetric {
   id: string;
@@ -63,6 +64,9 @@ const VehicleDashboard: React.FC = () => {
   const [selectedHourRange, setSelectedHourRange] = useState<{ start: string; end: string; label: string } | null>(null);
   const [isSecondViewMode, setIsSecondViewMode] = useState<boolean>(false);
   const [perSecondData, setPerSecondData] = useState<any>(null);
+  const [rawDataCache, setRawDataCache] = useState<any>(null); // Store raw data for worker (never in React tree for processing)
+  const [fullTimestamps, setFullTimestamps] = useState<number[]>([]); // Store all timestamps for scrubber (full timeline)
+  const { processData, getWindow, clearCache } = useDataProcessor();
   const [errorModal, setErrorModal] = useState<{
     isOpen: boolean;
     message: string;
@@ -490,7 +494,175 @@ useEffect(() => {
     };
   }, [handleShowGraph]);
 
-  // Listen to hour range selection events
+  // Listen to second view toggle events (from "View In Seconds" button)
+  useEffect(() => {
+    const handleSecondViewToggle = async (e: any) => {
+      const enabled = e?.detail?.enabled ?? false;
+      
+      if (enabled) {
+        // Enable second view mode - load raw data and process in worker
+        setIsSecondViewMode(true);
+        setSelectedHourRange(null); // Clear hour range selection
+        console.log('🕐 Second view enabled - Loading per-second data for entire day');
+        
+        try {
+          setLoading(true);
+          const response = await fetch('/data/dummy-per-second-1hour.json', {
+            headers: { 'Accept': 'application/json' },
+            cache: 'no-store'
+          });
+          
+          if (!response.ok) {
+            throw new Error(`Failed to load dummy data: ${response.status}`);
+          }
+          
+          const json = await response.json();
+          
+          // Store raw data (not processed) - worker will handle processing
+          const rawData = {
+            timestamps: json.timestamps || [],
+            gpsPerSecond: json.gpsPerSecond || [],
+            digitalPerSecond: json.digitalPerSecond || [],
+            analogPerSecond: json.analogPerSecond || []
+          };
+          
+          setRawDataCache(rawData);
+          
+          // Process data first to get the actual data range (without window to see full range)
+          // Pass no window to get full dataset (will be downsampled only if > 5000 points)
+          const processed = await processData(rawData, selectedDate, true);
+          
+          // Store all timestamps for scrubber (full timeline)
+          if (processed.timestamps && processed.timestamps.length > 0) {
+            setFullTimestamps(processed.timestamps);
+          } else {
+            // Fallback: collect timestamps from processed data
+            const allTimestamps = new Set<number>();
+            processed.analogMetrics.forEach((m: any) => {
+              if (m.data && m.data.length > 0) {
+                m.data.forEach((p: any) => {
+                  if (p.time instanceof Date) {
+                    allTimestamps.add(p.time.getTime());
+                  }
+                });
+              }
+            });
+            processed.digitalMetrics.forEach((m: any) => {
+              if (m.data && m.data.length > 0) {
+                m.data.forEach((p: any) => {
+                  if (p.time instanceof Date) {
+                    allTimestamps.add(p.time.getTime());
+                  }
+                });
+              }
+            });
+            setFullTimestamps(Array.from(allTimestamps).sort((a, b) => a - b));
+          }
+          
+          // Find the actual data range from processed data
+          let firstTimestamp: number | null = null;
+          let lastTimestamp: number | null = null;
+          
+          if (processed.timestamps && processed.timestamps.length > 0) {
+            firstTimestamp = processed.timestamps[0];
+            lastTimestamp = processed.timestamps[processed.timestamps.length - 1];
+          } else {
+            // Get timestamps from analog metrics
+            processed.analogMetrics.forEach((m: any) => {
+              if (m.data && m.data.length > 0) {
+                const first = m.data[0]?.time?.getTime?.();
+                const last = m.data[m.data.length - 1]?.time?.getTime?.();
+                if (typeof first === 'number' && (!firstTimestamp || first < firstTimestamp)) {
+                  firstTimestamp = first;
+                }
+                if (typeof last === 'number' && (!lastTimestamp || last > lastTimestamp)) {
+                  lastTimestamp = last;
+                }
+              }
+            });
+            
+            // Get timestamps from digital metrics
+            processed.digitalMetrics.forEach((m: any) => {
+              if (m.data && m.data.length > 0) {
+                const first = m.data[0]?.time?.getTime?.();
+                const last = m.data[m.data.length - 1]?.time?.getTime?.();
+                if (typeof first === 'number' && (!firstTimestamp || first < firstTimestamp)) {
+                  firstTimestamp = first;
+                }
+                if (typeof last === 'number' && (!lastTimestamp || last > lastTimestamp)) {
+                  lastTimestamp = last;
+                }
+              }
+            });
+          }
+          
+          // Use full downsampled dataset for charts (like minute view, but with second-level data)
+          // The downsampling (1500 points) ensures performance while showing full timeline
+          setVehicleMetrics(processed.analogMetrics);
+          if (processed.digitalMetrics.length > 0) {
+            setDigitalStatusChart({
+              id: 'digital-status',
+              name: 'Digital Status Indicators',
+              metrics: processed.digitalMetrics,
+            });
+          } else {
+            setDigitalStatusChart(null);
+          }
+          
+          // Set initial time and selection range to full data range
+          if (firstTimestamp && lastTimestamp) {
+            const centerTime = (firstTimestamp + lastTimestamp) / 2;
+            const centerDate = new Date(centerTime);
+            setSelectedTime(centerDate);
+            setSelectionStart(new Date(firstTimestamp));
+            setSelectionEnd(new Date(lastTimestamp));
+          }
+          
+          // Dispatch GPS data
+          if (processed.gpsData.length > 0) {
+            window.dispatchEvent(new CustomEvent('gps:data', {
+              detail: { gpsData: processed.gpsData }
+            }));
+          }
+          
+          setLoading(false);
+          console.log('✅ Loaded and processed per-second data (windowed charts, full timeline scrubber)');
+          
+          // Notify FilterControls that second view is enabled
+          window.dispatchEvent(new CustomEvent('second-view:changed', {
+            detail: { enabled: true }
+          }));
+        } catch (error) {
+          console.error('Error loading per-second data:', error);
+          setLoading(false);
+          setIsSecondViewMode(false);
+          setRawDataCache(null);
+        }
+      } else {
+        // Disable second view mode - switch back to minute view
+        setIsSecondViewMode(false);
+        setSelectedHourRange(null);
+        setPerSecondData(null);
+        setRawDataCache(null);
+        setFullTimestamps([]);
+        clearCache();
+        console.log('🕐 Second view disabled - Switching back to minute view');
+        
+        // Notify FilterControls that second view is disabled
+        window.dispatchEvent(new CustomEvent('second-view:changed', {
+          detail: { enabled: false }
+        }));
+      }
+    };
+    
+    window.addEventListener('second-view:toggle', handleSecondViewToggle as any);
+    
+    return () => {
+      window.removeEventListener('second-view:toggle', handleSecondViewToggle as any);
+    };
+  }, [selectedDate, selectedTime, processData, clearCache]);
+  
+  // Listen to hour range selection events (legacy support - can be removed if not needed)
   useEffect(() => {
     const handleHourRangeSelected = async (e: any) => {
       const { start, end, label } = e.detail;
@@ -536,6 +708,11 @@ useEffect(() => {
         setPerSecondData(filteredData);
         setLoading(false);
         console.log('✅ Loaded per-second data for hour range');
+        
+        // Notify FilterControls that second view is enabled
+        window.dispatchEvent(new CustomEvent('second-view:changed', {
+          detail: { enabled: true }
+        }));
       } catch (error) {
         console.error('Error loading per-second data:', error);
         setLoading(false);
@@ -547,6 +724,11 @@ useEffect(() => {
       setIsSecondViewMode(false);
       setPerSecondData(null);
       console.log('🕐 Hour range cleared - Switching back to minute view');
+      
+      // Notify FilterControls that second view is disabled
+      window.dispatchEvent(new CustomEvent('second-view:changed', {
+        detail: { enabled: false }
+      }));
     };
     
     window.addEventListener('hour-range:selected', handleHourRangeSelected as any);
@@ -558,7 +740,11 @@ useEffect(() => {
     };
   }, [selectedDate]);
   
-  // Process per-second data when it's loaded
+  // Note: In second view mode, we show full downsampled data (like minute view)
+  // No need to update window when selectedTime changes - charts show full timeline
+  // The red line just moves across the full timeline
+
+  // Process per-second data when it's loaded (legacy - kept for hour range support)
   useEffect(() => {
     if (!perSecondData || !isSecondViewMode) return;
     
@@ -692,24 +878,77 @@ useEffect(() => {
       setDigitalStatusChart(digitalChart);
     }
     
-    // Set initial time to start of range
-    if (selectedHourRange) {
+    // Set initial time and selection range
+    if (isSecondViewMode) {
+      // Find the first and last timestamps from the data
+      let firstTime: Date | null = null;
+      let lastTime: Date | null = null;
+      
+      // Check analog data
+      if (analogMetrics.length > 0 && analogMetrics[0].data.length > 0) {
+        const first = analogMetrics[0].data[0].time;
+        const last = analogMetrics[0].data[analogMetrics[0].data.length - 1].time;
+        if (first instanceof Date) firstTime = first;
+        if (last instanceof Date) lastTime = last;
+      }
+      
+      // Check digital data
+      if (digitalChart && digitalChart.metrics.length > 0) {
+        digitalChart.metrics.forEach(m => {
+          if (m.data && m.data.length > 0) {
+            const first = m.data[0].time;
+            const last = m.data[m.data.length - 1].time;
+            if (first instanceof Date && (!firstTime || first < firstTime)) firstTime = first;
+            if (last instanceof Date && (!lastTime || last > lastTime)) lastTime = last;
+          }
+        });
+      }
+      
+      if (firstTime && lastTime) {
+        // Set initial time to middle of range
+        const centerTime = new Date((firstTime.getTime() + lastTime.getTime()) / 2);
+        setSelectedTime(centerTime);
+        
+        // Set selection range: 10 minutes window centered on initial time
+        const rangeStart = new Date(centerTime.getTime() - 5 * 60 * 1000); // 5 minutes before
+        const rangeEnd = new Date(centerTime.getTime() + 5 * 60 * 1000); // 5 minutes after
+        
+        // Clamp to data range
+        if (rangeStart < firstTime) {
+          rangeStart.setTime(firstTime.getTime());
+          rangeEnd.setTime(firstTime.getTime() + 10 * 60 * 1000);
+        }
+        if (rangeEnd > lastTime) {
+          rangeEnd.setTime(lastTime.getTime());
+          rangeStart.setTime(lastTime.getTime() - 10 * 60 * 1000);
+        }
+        
+        setSelectionStart(rangeStart);
+        setSelectionEnd(rangeEnd);
+      } else if (selectedHourRange) {
+        // Fallback to hour range if available
+        const [hh, mm, ss] = selectedHourRange.start.split(':').map(Number);
+        const initialTime = new Date(baseDate);
+        initialTime.setHours(hh, mm, ss, 0);
+        setSelectedTime(initialTime);
+        
+        const endTime = new Date(initialTime);
+        endTime.setMinutes(mm + 10, 0, 0); // 10 minutes range
+        if (endTime.getHours() !== hh) {
+          endTime.setHours(hh, 59, 59, 999);
+        }
+        setSelectionStart(initialTime);
+        setSelectionEnd(endTime);
+      }
+    } else if (selectedHourRange) {
+      // Minute view mode with hour range
       const [hh, mm, ss] = selectedHourRange.start.split(':').map(Number);
       const initialTime = new Date(baseDate);
       initialTime.setHours(hh, mm, ss, 0);
       setSelectedTime(initialTime);
       
-      // Set selection range: 10 minutes in second view mode, 1 hour in minute view mode
       const endTime = new Date(initialTime);
-      if (isSecondViewMode) {
-        endTime.setMinutes(mm + 10, 0, 0); // 10 minutes range
-        // If adding 10 minutes crosses hour boundary, cap at hour end
-        if (endTime.getHours() !== hh) {
-          endTime.setHours(hh, 59, 59, 999);
-        }
-      } else {
-        endTime.setHours(hh + 1, 0, 0, 0); // 1 hour range
-      }
+      endTime.setHours(hh + 1, 0, 0, 0); // 1 hour range
       setSelectionStart(initialTime);
       setSelectionEnd(endTime);
     }
@@ -2189,63 +2428,26 @@ useEffect(() => {
 
   // Prepare scrubber data - per-second in second view mode, per-minute otherwise
   const scrubberData = useMemo(() => {
-    // In second view mode, use actual per-second timestamps from the data
-    if (isSecondViewMode && perSecondData && selectedHourRange) {
-      const baseDate = new Date(selectedDate);
-      baseDate.setHours(0, 0, 0, 0);
-      
-      // Get all unique timestamps from per-second data
-      const timestamps = new Set<number>();
-      
-      // Collect timestamps from analog per-second data
-      if (Array.isArray(perSecondData.analogPerSecond)) {
-        perSecondData.analogPerSecond.forEach((series: any) => {
-          (series.points || []).forEach((p: any) => {
-            const [hh, mm, ss] = (p.time || '00:00:00').split(':').map(Number);
-            const time = new Date(baseDate);
-            time.setHours(hh, mm, ss, 0);
-            timestamps.add(time.getTime());
-          });
-        });
+    // In second view mode, use full timeline timestamps (not windowed)
+    if (isSecondViewMode && fullTimestamps.length > 0) {
+      // Use full timeline for scrubber (downsampled to reasonable size for display)
+      // Downsample to ~2000 points max for smooth scrubber rendering
+      const maxScrubberPoints = 2000;
+      if (fullTimestamps.length <= maxScrubberPoints) {
+        return fullTimestamps.map(t => ({ time: t }));
+      } else {
+        // Downsample timestamps evenly
+        const step = Math.ceil(fullTimestamps.length / maxScrubberPoints);
+        const downsampled: number[] = [];
+        for (let i = 0; i < fullTimestamps.length; i += step) {
+          downsampled.push(fullTimestamps[i]);
+        }
+        // Always include the last timestamp
+        if (downsampled[downsampled.length - 1] !== fullTimestamps[fullTimestamps.length - 1]) {
+          downsampled.push(fullTimestamps[fullTimestamps.length - 1]);
+        }
+        return downsampled.map(t => ({ time: t }));
       }
-      
-      // Collect timestamps from digital per-second data
-      if (Array.isArray(perSecondData.digitalPerSecond)) {
-        perSecondData.digitalPerSecond.forEach((series: any) => {
-          (series.points || []).forEach((p: any) => {
-            const [hh, mm, ss] = (p.time || '00:00:00').split(':').map(Number);
-            const time = new Date(baseDate);
-            time.setHours(hh, mm, ss, 0);
-            timestamps.add(time.getTime());
-          });
-        });
-      }
-      
-      // Collect timestamps from GPS per-second data
-      if (Array.isArray(perSecondData.gpsPerSecond)) {
-        perSecondData.gpsPerSecond.forEach((point: any) => {
-          const [hh, mm, ss] = (point.time || '00:00:00').split(':').map(Number);
-          const time = new Date(baseDate);
-          time.setHours(hh, mm, ss, 0);
-          timestamps.add(time.getTime());
-        });
-      }
-      
-      // Filter to selected hour range and sort
-      const [startH, startM, startS] = selectedHourRange.start.split(':').map(Number);
-      const [endH, endM, endS] = selectedHourRange.end.split(':').map(Number);
-      
-      const startTime = new Date(baseDate);
-      startTime.setHours(startH, startM, startS, 0);
-      
-      const endTime = new Date(baseDate);
-      endTime.setHours(endH, endM, endS, 0);
-      
-      const filteredTimestamps = Array.from(timestamps)
-        .filter(t => t >= startTime.getTime() && t <= endTime.getTime())
-        .sort((a, b) => a - b);
-      
-      return filteredTimestamps.map(t => ({ time: t }));
     }
     
     // Default: per-minute resolution
@@ -2285,7 +2487,7 @@ useEffect(() => {
     }
     if (data.length === 0 || data[data.length - 1].time !== endTs) data.push({ time: endTs });
     return data;
-  }, [vehicleMetrics, digitalStatusChart, selectionStart, selectionEnd, isSecondViewMode, selectedHourRange, selectedDate, perSecondData]);
+  }, [vehicleMetrics, digitalStatusChart, selectionStart, selectionEnd, isSecondViewMode, selectedHourRange, selectedDate, perSecondData, fullTimestamps]);
 
   // Calculate synchronized time domain from selection range
   const timeDomain = useMemo<[number, number] | null>(() => {

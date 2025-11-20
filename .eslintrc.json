@@ -20,6 +20,19 @@
         "@typescript-eslint/explicit-module-boundary-types": "off",
         "@typescript-eslint/no-explicit-any": "warn"
       }
+    },
+    {
+      "files": ["**/*.worker.ts", "**/*.worker.js", "**/workers/**/*.ts", "src/workers/**/*"],
+      "env": {
+        "worker": true
+      },
+      "globals": {
+        "self": "readonly"
+      },
+      "rules": {
+        "no-restricted-globals": "off",
+        "no-undef": "off"
+      }
     }
   ]
 }

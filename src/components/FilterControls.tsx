@@ -595,8 +595,7 @@ const FilterControls: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [showCalendar, setShowCalendar] = useState<boolean>(false);
   const calendarRef = useRef<HTMLDivElement>(null);
-  const [hourRanges, setHourRanges] = useState<Array<{ start: string; end: string; label: string }>>([]);
-  const [selectedHourRange, setSelectedHourRange] = useState<string>('');
+  const [isSecondViewMode, setIsSecondViewMode] = useState<boolean>(false);
 
   // Read URL parameters on mount to auto-select device and date
   useEffect(() => {
@@ -777,77 +776,46 @@ const FilterControls: React.FC = () => {
     return () => { aborted = true; };
   }, [selectedVehicleId]);
 
-  // Load available hour ranges from JSON file
+  // Toggle second view mode
+  const handleToggleSecondView = () => {
+    // Check if vehicle and date are selected
+    if (!selectedVehicleId || !selectedDate) {
+      console.warn('⚠️ Cannot toggle second view: vehicle or date not selected');
+      alert('Please select a vehicle and date first');
+      return;
+    }
+    
+    const newMode = !isSecondViewMode;
+    setIsSecondViewMode(newMode);
+    console.log('🔄 Toggling second view mode:', newMode ? 'enabled' : 'disabled');
+    
+    if (newMode) {
+      // Enable second view mode - dispatch event to load per-second data for entire day
+      window.dispatchEvent(new CustomEvent('second-view:toggle', {
+        detail: { enabled: true }
+      }));
+    } else {
+      // Disable second view mode - switch back to minute view
+      window.dispatchEvent(new CustomEvent('second-view:toggle', {
+        detail: { enabled: false }
+      }));
+    }
+  };
+  
+  // Listen for external changes to second view mode (e.g., from VehicleDashboard)
   useEffect(() => {
-    const loadHourRanges = async () => {
-      try {
-        const response = await fetch('/data/dummy-per-second-1hour.json', {
-          headers: { 'Accept': 'application/json' },
-          cache: 'no-store'
-        });
-        
-        if (!response.ok) return;
-        
-        const json = await response.json();
-        const timestamps = json.timestamps || [];
-        
-        if (timestamps.length === 0) return;
-        
-        // Extract unique hours from timestamps
-        const hourSet = new Set<number>();
-        timestamps.forEach((ts: any) => {
-          const [hh] = ts.time.split(':').map(Number);
-          hourSet.add(hh);
-        });
-        
-        // Create hour ranges (each hour to next hour)
-        const ranges: Array<{ start: string; end: string; label: string }> = [];
-        const sortedHours = Array.from(hourSet).sort((a, b) => a - b);
-        
-        sortedHours.forEach((hour) => {
-          const nextHour = hour + 1;
-          const startTime = `${String(hour).padStart(2, '0')}:00:00`;
-          const endTime = `${String(nextHour).padStart(2, '0')}:00:00`;
-          
-          // Format for display: "10:00 AM to 11:00 AM"
-          const formatHour = (h: number) => {
-            if (h === 0) return '12:00 AM';
-            if (h < 12) return `${h}:00 AM`;
-            if (h === 12) return '12:00 PM';
-            return `${h - 12}:00 PM`;
-          };
-          
-          const label = `${formatHour(hour)} to ${formatHour(nextHour)}`;
-          ranges.push({ start: startTime, end: endTime, label });
-        });
-        
-        setHourRanges(ranges);
-      } catch (error) {
-        console.error('Error loading hour ranges:', error);
+    const handleSecondViewChange = (e: any) => {
+      const enabled = e?.detail?.enabled ?? false;
+      if (enabled !== isSecondViewMode) {
+        setIsSecondViewMode(enabled);
       }
     };
     
-    loadHourRanges();
-  }, []);
-  
-  // Dispatch event when hour range is selected
-  useEffect(() => {
-    if (selectedHourRange) {
-      const range = hourRanges.find(r => r.label === selectedHourRange);
-      if (range) {
-        window.dispatchEvent(new CustomEvent('hour-range:selected', {
-          detail: {
-            start: range.start,
-            end: range.end,
-            label: range.label
-          }
-        }));
-      }
-    } else {
-      // Clear hour range filter
-      window.dispatchEvent(new CustomEvent('hour-range:cleared'));
-    }
-  }, [selectedHourRange, hourRanges]);
+    window.addEventListener('second-view:changed', handleSecondViewChange as any);
+    return () => {
+      window.removeEventListener('second-view:changed', handleSecondViewChange as any);
+    };
+  }, [isSecondViewMode]);
   
   // Dispatch event when vehicle or date changes to trigger chart reload
   useEffect(() => {
@@ -960,17 +928,13 @@ const FilterControls: React.FC = () => {
             )}
           </div>
           
-          <select 
-            className={styles.select}
-            value={selectedHourRange}
-            onChange={(e) => setSelectedHourRange(e.target.value)}
-            disabled={hourRanges.length === 0}
+          <button
+            className={`${styles.filterButton} ${isSecondViewMode ? styles.activeButton : ''}`}
+            onClick={handleToggleSecondView}
+            type="button"
           >
-            <option value="">View In Seconds </option>
-            {hourRanges.map((range, idx) => (
-              <option key={idx} value={range.label}>{range.label}</option>
-            ))}
-          </select>
+            {isSecondViewMode ? 'View In Minutes' : 'View In Seconds'}
+          </button>
           
           <button className={styles.filterButton} onClick={() => window.dispatchEvent(new CustomEvent('filters:open'))}>Additional Filters</button>
         </div>
